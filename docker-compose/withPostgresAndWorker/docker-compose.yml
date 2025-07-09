@@ -4,6 +4,8 @@ volumes:
   db_storage:
   n8n_storage:
   redis_storage:
+  certbot_etc:
+  certbot_var:
 
 x-shared: &shared
   restart: always
@@ -19,6 +21,9 @@ x-shared: &shared
     - QUEUE_BULL_REDIS_HOST=redis
     - QUEUE_HEALTH_CHECK_ACTIVE=true
     - N8N_ENCRYPTION_KEY=${ENCRYPTION_KEY}
+    - N8N_HOST=${N8N_DOMAIN}
+    - N8N_PROTOCOL=https
+    - WEBHOOK_URL=https://${N8N_DOMAIN}/
   links:
     - postgres
     - redis
@@ -62,11 +67,38 @@ services:
 
   n8n:
     <<: *shared
-    ports:
-      - 5678:5678
+    # Remove external port - only accessible via nginx
+    expose:
+      - "5678"
 
   n8n-worker:
     <<: *shared
     command: worker
     depends_on:
       - n8n
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/templates/default.conf.template:ro
+      - certbot_etc:/etc/letsencrypt
+      - certbot_var:/var/lib/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    environment:
+      - N8N_DOMAIN=${N8N_DOMAIN}
+    depends_on:
+      - n8n
+    command: "/bin/sh -c 'envsubst < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf && while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
+
+  certbot:
+    image: certbot/certbot
+    restart: unless-stopped
+    volumes:
+      - certbot_etc:/etc/letsencrypt
+      - certbot_var:/var/lib/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
