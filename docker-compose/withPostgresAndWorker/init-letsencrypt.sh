@@ -7,7 +7,7 @@ if [ -f .env ]; then
     export $(grep -v '^#' .env | xargs)
 fi
 
-domains=($N8N_DOMAIN)
+domains="$N8N_DOMAIN"
 rsa_key_size=4096
 data_path="./certbot"
 email="${LETSENCRYPT_EMAIL}" # Email from environment variable
@@ -50,11 +50,8 @@ docker-compose run --rm --entrypoint "\
 echo
 
 echo "### Requesting Let's Encrypt certificate for $domains ..."
-# Join $domains to -d args
-domain_args=""
-for domain in "${domains[@]}"; do
-  domain_args="$domain_args -d $domain"
-done
+# Set domain args
+domain_args="-d $domains"
 
 # Select appropriate email arg
 case "$email" in
