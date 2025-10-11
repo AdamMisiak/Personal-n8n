@@ -22,7 +22,6 @@ x-shared: &shared
     - N8N_HOST=n8n.bearbit.dev
     - N8N_PROTOCOL=https
     - N8N_PUBLIC_API_DISABLED=false
-    - N8N_PUBLIC_API_PATH=/api/v1
     - WEBHOOK_URL=https://n8n.bearbit.dev/
   links:
     - postgres
