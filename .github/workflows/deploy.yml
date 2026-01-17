@@ -1,0 +1,200 @@
+name: Deploy n8n
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Required configuration in GitHub:
+#
+# SECRETS (Settings → Secrets and variables → Actions):
+# - DEPLOY_SSH_KEY: SSH private key for VM
+# - DEPLOY_HOST: VM IP address
+# - DEPLOY_USER: SSH username
+# - SLACK_WEBHOOK_URL: (optional) Slack notifications
+#
+# VARIABLES (Settings → Secrets and variables → Actions → Variables):
+# - DEPLOY_PATH: Path to docker-compose directory on VM (e.g., /root/n8n/docker-compose/withPostgresAndWorker)
+
+jobs:
+  deploy:
+    name: Deploy n8n
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate configuration
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+        run: |
+          echo "🔍 Validating deployment configuration..."
+
+          ERRORS=0
+
+          echo ""
+          echo "📋 Checking required secrets..."
+
+          if [ -z "$DEPLOY_SSH_KEY" ]; then
+            echo "❌ DEPLOY_SSH_KEY is not set"
+            ERRORS=$((ERRORS + 1))
+          else
+            echo "✅ DEPLOY_SSH_KEY is set"
+          fi
+
+          if [ -z "$DEPLOY_HOST" ]; then
+            echo "❌ DEPLOY_HOST is not set"
+            ERRORS=$((ERRORS + 1))
+          else
+            echo "✅ DEPLOY_HOST is set"
+          fi
+
+          if [ -z "$DEPLOY_USER" ]; then
+            echo "❌ DEPLOY_USER is not set"
+            ERRORS=$((ERRORS + 1))
+          else
+            echo "✅ DEPLOY_USER is set"
+          fi
+
+          echo ""
+          echo "📋 Checking required variables..."
+
+          if [ -z "$DEPLOY_PATH" ]; then
+            echo "❌ DEPLOY_PATH is not set"
+            ERRORS=$((ERRORS + 1))
+          else
+            echo "✅ DEPLOY_PATH is set: $DEPLOY_PATH"
+          fi
+
+          echo ""
+          if [ $ERRORS -gt 0 ]; then
+            echo "❌ Validation failed with $ERRORS error(s)"
+            echo ""
+            echo "Please configure the missing variables in:"
+            echo "  GitHub → Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+
+          echo "✅ All required configuration is present"
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to server
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
+            set -e
+            echo "📦 Navigating to project directory..."
+            cd ${{ vars.DEPLOY_PATH }}
+
+            echo "📥 Pulling latest Docker images..."
+            docker compose pull
+
+            echo "🚀 Restarting services..."
+            docker compose up -d --remove-orphans
+
+            echo "🧹 Cleaning up old images..."
+            docker image prune -f
+
+            echo ""
+            echo "✅ Deployment completed!"
+            echo ""
+            echo "📊 Service status:"
+            docker compose ps
+
+            echo ""
+            echo "📋 Current images:"
+            docker compose images
+          EOF
+
+      - name: Cleanup SSH Key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+
+      - name: Get deployment info
+        id: deploy_info
+        if: always()
+        run: |
+          echo "short_sha=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Notify Slack on Success
+        if: success() && vars.SLACK_WEBHOOK_URL != ''
+        uses: slackapi/slack-github-action@v2.0.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "✅ n8n Deployed",
+                    "emoji": true
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Commit:*\n<${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|${{ steps.deploy_info.outputs.short_sha }}>"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Triggered by:*\n${{ github.actor }}"
+                    }
+                  ]
+                }
+              ]
+            }
+
+      - name: Notify Slack on Failure
+        if: failure() && vars.SLACK_WEBHOOK_URL != ''
+        uses: slackapi/slack-github-action@v2.0.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "❌ n8n Deployment Failed",
+                    "emoji": true
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Triggered by:*\n${{ github.actor }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View Workflow Logs"
+                      },
+                      "style": "danger",
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }
+                  ]
+                }
+              ]
+            }
