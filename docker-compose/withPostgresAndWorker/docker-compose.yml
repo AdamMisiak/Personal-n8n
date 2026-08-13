@@ -85,6 +85,12 @@ services:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./certbot/letsencrypt:/etc/letsencrypt
       - ./certbot/www:/var/www/certbot
+    # Certbot renews the cert files, but nginx reads certificates at startup and keeps
+    # them in memory — so a renewal stays invisible to browsers until nginx is reloaded,
+    # and a long-running container ends up serving an expired cert. Reload every 6h
+    # (graceful, no dropped connections); the renewal window is 30 days.
+    command: >
+      /bin/sh -c "while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g 'daemon off;'"
     depends_on:
       - n8n
 
