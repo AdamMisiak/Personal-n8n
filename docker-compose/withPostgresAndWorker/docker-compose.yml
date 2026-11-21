@@ -23,6 +23,8 @@ x-shared: &shared
     - N8N_PROTOCOL=https
     - N8N_PUBLIC_API_DISABLED=false
     - WEBHOOK_URL=https://n8n.bearbit.dev/
+    - GENERIC_TIMEZONE=Europe/Warsaw
+    - TZ=Europe/Warsaw
   links:
     - postgres
     - redis
